@@ -30,63 +30,39 @@
 # ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-from __future__ import annotations
-
 import fnmatch
 from functools import partial
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Generic
 
 from rosbridge_library.capability import Capability
 from rosbridge_library.internal.pngcompression import encode as encode_png
 from rosbridge_library.internal.subscribers import manager
 from rosbridge_library.internal.subscription_modifiers import MessageHandler
-from rosbridge_library.internal.type_support import ROSMessageT
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from rclpy.node import Node
-
-    from rosbridge_library.internal.outgoing_message import OutgoingMessage
-    from rosbridge_library.protocol import Protocol
-
 
 try:
-    from ujson import dumps as encode_json  # type: ignore[import]
+    from ujson import dumps as encode_json
 except ImportError:
     try:
-        from simplejson import dumps as encode_json  # type: ignore[import]
+        from simplejson import dumps as encode_json
     except ImportError:
-        from json import dumps as encode_json  # type: ignore[assignment]
+        from json import dumps as encode_json
 
 
-class Subscription(Generic[ROSMessageT]):
-    """
-    Keeps track of the clients multiple calls to subscribe.
+class Subscription:
+    """Keeps track of the clients multiple calls to subscribe.
 
-    Chooses the most appropriate settings to send messages.
-    """
+    Chooses the most appropriate settings to send messages"""
 
-    clients: dict[str, dict[str, Any]]
+    def __init__(self, client_id, topic, publish, node_handle):
+        """Create a subscription for the specified client on the specified
+        topic, with callback publish
 
-    def __init__(
-        self,
-        client_id: str,
-        topic: str,
-        publish: Callable[[OutgoingMessage[ROSMessageT], int | None, str], None] | None,
-        node_handle: Node,
-    ) -> None:
-        """
-        Create a subscription.
+        Keyword arguments:
+        client_id -- the ID of the client making this subscription
+        topic     -- the name of the topic to subscribe to
+        publish   -- the callback function for incoming messages
+        node_handle -- Handle to a rclpy node to create the publisher.
 
-        Create a subscription for the specified client on the specified
-        topic, with callback publish.
-
-        :param client_id: The ID of the client making this subscription
-        :param topic: The name of the topic to subscribe to
-        :param publish: The callback function for incoming messages
-        :param node_handle: Handle to a rclpy node to create the publisher.
         """
         self.client_id = client_id
         self.topic = topic
@@ -95,14 +71,12 @@ class Subscription(Generic[ROSMessageT]):
 
         self.clients = {}
 
-        self.handler: MessageHandler[OutgoingMessage[ROSMessageT]] = MessageHandler(
-            None, self._publish
-        )
+        self.handler = MessageHandler(None, self._publish)
         self.handler_lock = Lock()
         self.update_params()
 
-    def unregister(self) -> None:
-        """Unsubscribe this subscription and clean up resources."""
+    def unregister(self):
+        """Unsubscribes this subscription and cleans up resources"""
         manager.unsubscribe(self.client_id, self.topic)
         with self.handler_lock:
             self.handler.finish(block=False)
@@ -110,31 +84,34 @@ class Subscription(Generic[ROSMessageT]):
 
     def subscribe(
         self,
-        sid: str,
-        msg_type: str | None = None,
-        throttle_rate: int = 0,
-        queue_length: int = 0,
-        fragment_size: int | None = None,
-        compression: str = "none",
-    ) -> None:
-        """
-        Add another client's subscription request.
+        sid=None,
+        msg_type=None,
+        throttle_rate=0,
+        queue_length=0,
+        fragment_size=None,
+        compression="none",
+        qos=None, # <-- Add this
+    ):
+        """Add another client's subscription request
 
         If there are multiple calls to subscribe, the values actually used for
         queue_length, fragment_size, compression and throttle_rate are
         chosen to encompass all subscriptions' requirements
 
-        :param sid: The subscription id from the client
-        :param msg_type: The type of the message to subscribe to
-        :param throttle_rate: The minimum time (in ms) allowed between messages
-            being sent. If multiple subscriptions, the lower of these is used
-        :param queue_length: The number of messages that can be buffered.  If
-            multiple subscriptions, the lower of these is used
-        :param fragment_size: None if no fragmentation, or the maximum length of
-            allowed outgoing messages
-        :param compression: "none" if no compression, or some other value if
-            compression is to be used (current valid values are 'png')
+        Keyword arguments:
+        sid             -- the subscription id from the client
+        msg_type        -- the type of the message to subscribe to
+        throttle_rate   -- the minimum time (in ms) allowed between messages
+        being sent.  If multiple subscriptions, the lower of these is used
+        queue_length    -- the number of messages that can be buffered.  If
+        multiple subscriptions, the lower of these is used
+        fragment_size   -- None if no fragmentation, or the maximum length of
+        allowed outgoing messages
+        compression     -- "none" if no compression, or some other value if
+        compression is to be used (current valid values are 'png')
+
         """
+
         client_details = {
             "throttle_rate": throttle_rate,
             "queue_length": queue_length,
@@ -156,13 +133,15 @@ class Subscription(Generic[ROSMessageT]):
             self.node_handle,
             msg_type=msg_type,
             raw=raw,
+            qos=qos  # <-- Add this 
         )
 
-    def unsubscribe(self, sid: str | None = None) -> None:
-        """
-        Unsubscribe this particular client's subscription.
+    def unsubscribe(self, sid=None):
+        """Unsubscribe this particular client's subscription
 
-        :param sid: The individual subscription id. If None, all are unsubscribed
+        Keyword arguments:
+        sid -- the individual subscription id.  If None, all are unsubscribed
+
         """
         if sid is None:
             self.clients.clear()
@@ -172,40 +151,29 @@ class Subscription(Generic[ROSMessageT]):
         if not self.is_empty():
             self.update_params()
 
-    def is_empty(self) -> bool:
-        """Return True if there are no subscriptions currently."""
+    def is_empty(self):
+        """Return true if there are no subscriptions currently"""
         return len(self.clients) == 0
 
-    def _publish(self, message: OutgoingMessage[ROSMessageT]) -> None:
-        """
-        Publish a message to the subscribed clients.
+    def _publish(self, message):
+        """Internal method to propagate published messages to the registered
+        publish callback"""
+        self.publish(message, self.fragment_size, self.compression)
 
-        Internal method to propagate published messages to the registered
-        publish callback.
-        """
-        if self.publish is not None:
-            self.publish(message, self.fragment_size, self.compression)
-
-    def on_msg(self, msg: OutgoingMessage[ROSMessageT]) -> None:
-        """
-        Handle incoming messages.
-
-        Raw callback called by subscription manager for all incoming
+    def on_msg(self, msg):
+        """Raw callback called by subscription manager for all incoming
         messages.
 
         Incoming messages are passed to the message handler which may drop,
-        buffer, or propagate the message.
+        buffer, or propagate the message
+
         """
         with self.handler_lock:
             self.handler.handle_message(msg)
 
-    def update_params(self) -> None:
-        """
-        Update the parameters of the message handler based on current subscriptions.
-
-        Determine the 'lowest common denominator' params to satisfy all
-        subscribed clients.
-        """
+    def update_params(self):
+        """Determine the 'lowest common denominator' params to satisfy all
+        subscribed clients."""
         if len(self.clients) == 0:
             self.throttle_rate = 0
             self.queue_length = 0
@@ -213,7 +181,7 @@ class Subscription(Generic[ROSMessageT]):
             self.compression = "none"
             return
 
-        def f(fieldname: str) -> list[Any]:
+        def f(fieldname):
             return [x[fieldname] for x in self.clients.values()]
 
         self.throttle_rate = min(f("throttle_rate"))
@@ -238,21 +206,21 @@ class Subscription(Generic[ROSMessageT]):
 
 
 class Subscribe(Capability):
-    subscribe_msg_fields = (
+
+    subscribe_msg_fields = [
         (True, "topic", str),
         (False, "type", str),
         (False, "throttle_rate", int),
         (False, "fragment_size", int),
         (False, "queue_length", int),
         (False, "compression", str),
-    )
-    unsubscribe_msg_fields = ((True, "topic", str),)
+        (False, "qos", dict),  # <-- Add this
+    ]
+    unsubscribe_msg_fields = [(True, "topic", str)]
 
-    parameter_names = ("topics_glob",)
+    topics_glob = None
 
-    topics_glob: list[str] | None = None
-
-    def __init__(self, protocol: Protocol) -> None:
+    def __init__(self, protocol):
         # Call superclass constructor
         Capability.__init__(self, protocol)
 
@@ -260,22 +228,22 @@ class Subscribe(Capability):
         protocol.register_operation("subscribe", self.subscribe)
         protocol.register_operation("unsubscribe", self.unsubscribe)
 
-        self._subscriptions: dict[str, Subscription] = {}
+        self._subscriptions = {}
 
-    def subscribe(self, msg: dict[str, Any]) -> None:
+    def subscribe(self, msg):
         # Pull out the ID
-        sid: str | None = msg.get("id")
+        sid = msg.get("id", None)
 
         # Check the args
         self.basic_type_check(msg, self.subscribe_msg_fields)
 
         # Make the subscription
-        topic: str = msg["topic"]
+        topic = msg["topic"]
 
-        if self.topics_glob is not None:
+        if Subscribe.topics_glob is not None and Subscribe.topics_glob:
             self.protocol.log("debug", "Topic security glob enabled, checking topic: " + topic)
             match = False
-            for glob in self.topics_glob:
+            for glob in Subscribe.topics_glob:
                 if fnmatch.fnmatch(topic, glob):
                     self.protocol.log(
                         "debug",
@@ -302,23 +270,24 @@ class Subscribe(Capability):
         # Register the subscriber
         subscribe_args = {
             "sid": sid,
-            "msg_type": msg.get("type"),
+            "msg_type": msg.get("type", None),
             "throttle_rate": msg.get("throttle_rate", 0),
-            "fragment_size": msg.get("fragment_size"),
+            "fragment_size": msg.get("fragment_size", None),
             "queue_length": msg.get("queue_length", 0),
             "compression": msg.get("compression", "none"),
+            "qos": msg.get("qos", None),  # <-- Add this 
         }
         self._subscriptions[topic].subscribe(**subscribe_args)
 
-        self.protocol.log("info", f"Subscribed to {topic}")
+        self.protocol.log("info", "Subscribed to %s" % topic)
 
-    def unsubscribe(self, msg: dict[str, Any]) -> None:
+    def unsubscribe(self, msg):
         # Pull out the ID
-        sid: str | None = msg.get("id")
+        sid = msg.get("id", None)
 
         self.basic_type_check(msg, self.unsubscribe_msg_fields)
 
-        topic: str = msg["topic"]
+        topic = msg["topic"]
 
         if topic not in self._subscriptions:
             return
@@ -328,50 +297,43 @@ class Subscribe(Capability):
             self._subscriptions[topic].unregister()
             del self._subscriptions[topic]
 
-        self.protocol.log("info", f"Unsubscribed from {topic}")
+        self.protocol.log("info", "Unsubscribed from %s" % topic)
 
-    def publish(
-        self,
-        topic: str,
-        message: OutgoingMessage,
-        fragment_size: int | None = None,  # noqa: ARG002
-        compression: str = "none",
-    ) -> None:
-        """
-        Publish a message to the client.
+    def publish(self, topic, message, fragment_size=None, compression="none"):
+        """Publish a message to the client
 
-        :param topic: The topic to publish the message on
-        :param message: A ROS message wrapped by OutgoingMessage
-        :param fragment_size: (optional) If provided, fragment the serialized message into msgs
-            with payloads not greater than this value
-        :param compression: (optional) compress the message. valid values are
-            'png' and 'none'
+        Keyword arguments:
+        topic   -- the topic to publish the message on
+        message -- a ROS message wrapped by OutgoingMessage
+        fragment_size -- (optional) fragment the serialized message into msgs
+        with payloads not greater than this value
+        compression   -- (optional) compress the message. valid values are
+        'png' and 'none'
+
         """
         # TODO: fragmentation, proper ids
 
-        outgoing_msg: dict[str, Any] | bytes = {}
-        outgoing_msg_raw: dict[str, Any] = {"op": "publish", "topic": topic}
+        outgoing_msg = {"op": "publish", "topic": topic}
         if compression == "png":
-            outgoing_msg_raw["msg"] = message.get_json_values()
-            outgoing_msg_dumped: str = encode_json(outgoing_msg_raw)
+            outgoing_msg["msg"] = message.get_json_values()
+            outgoing_msg_dumped = encode_json(outgoing_msg)
             outgoing_msg = {"op": "png", "data": encode_png(outgoing_msg_dumped)}
         elif compression == "cbor":
-            outgoing_msg = message.get_cbor(outgoing_msg_raw)
+            outgoing_msg = message.get_cbor(outgoing_msg)
         elif compression == "cbor-raw":
             (secs, nsecs) = self.protocol.node_handle.get_clock().now().seconds_nanoseconds()
-            outgoing_msg_raw["msg"] = {
+            outgoing_msg["msg"] = {
                 "secs": secs,
                 "nsecs": nsecs,
                 "bytes": message.message,
             }
-            outgoing_msg = message.get_cbor_raw(outgoing_msg_raw)
+            outgoing_msg = message.get_cbor_raw(outgoing_msg)
         else:
-            outgoing_msg_raw["msg"] = message.get_json_values()
-            outgoing_msg = outgoing_msg_raw
+            outgoing_msg["msg"] = message.get_json_values()
 
         self.protocol.send(outgoing_msg, compression=compression)
 
-    def finish(self) -> None:
+    def finish(self):
         for subscription in self._subscriptions.values():
             subscription.unregister()
         self._subscriptions.clear()

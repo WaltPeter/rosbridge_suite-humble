@@ -1,11 +1,110 @@
-rosbridge_suite
+rosbridge_suite (mod)
 ===============
 
-[![ROS Foxy version](https://img.shields.io/ros/v/foxy/rosbridge_suite)](https://index.ros.org/p/rosbridge_suite/github-RobotWebTools-rosbridge_suite/#foxy)
-[![ROS Galactic version](https://img.shields.io/ros/v/galactic/rosbridge_suite)](https://index.ros.org/p/rosbridge_suite/github-RobotWebTools-rosbridge_suite/#galactic)
 [![ROS Humble version](https://img.shields.io/ros/v/humble/rosbridge_suite)](https://index.ros.org/p/rosbridge_suite/github-RobotWebTools-rosbridge_suite/#humble)
-[![ROS Rolling version](https://img.shields.io/ros/v/rolling/rosbridge_suite)](https://index.ros.org/p/rosbridge_suite/github-RobotWebTools-rosbridge_suite/#rolling)
 
+
+### Building and Installing This Custom Version
+
+This section explains how to uninstall existing rosbridge installations and build your custom version with QoS support from this local repository.
+
+#### Uninstalling Existing Installations
+
+**1. Uninstall APT Packages:**
+```bash
+sudo apt remove ros-humble-rosbridge-library ros-humble-rosbridge-msgs ros-humble-rosbridge-server ros-humble-rosbridge-suite ros-humble-rosapi ros-humble-rosapi-msgs
+```
+
+**2. Uninstall Previous Source Builds:**
+If you previously built rosbridge from source in `/opt/ros/humble/src/`:
+```bash
+cd /opt/ros/humble/src/
+rm -rf rosbridge_suite
+```
+
+**3. Uninstall Pip Installations:**
+If you installed rosbridge via pip:
+```bash
+pip3 uninstall rosbridge-suite
+```
+
+#### Building from Local Repository
+
+**Custom repository location:** `~/rosbridge_suite`
+
+**1. Build with Colcon:**
+```bash
+cd ~/rosbridge_suite
+colcon build --symlink-install
+```
+
+**2. Source** Installation:
+
+Add to your `~/.bashrc` for persistence:
+```bash
+echo "source ~/rosbridge_suite/install/setup.bash" >> ~/.bashrc
+source ~/.bashrc
+```
+
+Or source temporarily in your current terminal:
+```bash
+source ~/rosbridge_suite/install/setup.bash
+```
+
+**3. Verify Installation:**
+```bash
+python3 -c "import rosbridge_library; print(rosbridge_library.__file__)"
+```
+
+Expected output: `/home/YOUR_USERNAME/rosbridge_suite/install/...`
+
+#### Rebuilding After Code Changes
+
+After making changes to the source code:
+```bash
+cd ~/rosbridge_suite
+colcon build --symlink-install
+source install/setup.bash
+```
+
+The `--symlink-install` flag creates symbolic links, allowing you to edit source files directly without rebuilding the entire package.
+
+#### Updating from Upstream
+
+To pull latest changes from the upstream humble branch:
+```bash
+cd ~/rosbridge_suite
+git fetch origin humble
+git pull origin humble
+colcon build --symlink-install
+source install/setup.bash
+```
+
+**Note:** If you have uncommitted changes, use `git stash` before pulling.
+
+#### Custom Features
+
+This build includes custom QoS (Quality of Service) parameter support for rosbridge subscriptions, allowing clients to specify:
+- Reliability: `reliable` or `best_effort`
+- Durability: `volatile` or `transient_local`
+- Depth: Queue size (integer)
+
+Example usage in rosbridge JSON:
+```json
+{
+  "op": "subscribe",
+  "topic": "/camera/image_raw",
+  "qos": {
+    "reliability": "best_effort",
+    "durability": "volatile",
+    "depth": 5
+  }
+}
+```
+
+---
+Original Readme
+---
 
 #### Server Implementations of the rosbridge v2 Protocol
 
