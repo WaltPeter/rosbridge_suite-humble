@@ -34,7 +34,8 @@ pip3 uninstall rosbridge-suite
 
 **1. Build with Colcon:**
 ```bash
-cd ~/rosbridge_suite
+cd ~/rosbridge_suite-humble
+rosdep install -i --from-path . --rosdistro humble -y
 colcon build --symlink-install
 ```
 
@@ -42,13 +43,13 @@ colcon build --symlink-install
 
 Add to your `~/.bashrc` for persistence:
 ```bash
-echo "source ~/rosbridge_suite/install/setup.bash" >> ~/.bashrc
+echo "source ~/rosbridge_suite-humble/install/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
 
 Or source temporarily in your current terminal:
 ```bash
-source ~/rosbridge_suite/install/setup.bash
+source ~/rosbridge_suite-humble/install/setup.bash
 ```
 
 **3. Verify Installation:**
@@ -56,13 +57,13 @@ source ~/rosbridge_suite/install/setup.bash
 python3 -c "import rosbridge_library; print(rosbridge_library.__file__)"
 ```
 
-Expected output: `/home/YOUR_USERNAME/rosbridge_suite/install/...`
+Expected output: `/home/YOUR_USERNAME/rosbridge_suite-humble/install/...`
 
 #### Rebuilding After Code Changes
 
 After making changes to the source code:
 ```bash
-cd ~/rosbridge_suite
+cd ~/rosbridge_suite-humble
 colcon build --symlink-install
 source install/setup.bash
 ```
@@ -73,7 +74,7 @@ The `--symlink-install` flag creates symbolic links, allowing you to edit source
 
 To pull latest changes from the upstream humble branch:
 ```bash
-cd ~/rosbridge_suite
+cd ~/rosbridge_suite-humble
 git fetch origin humble
 git pull origin humble
 colcon build --symlink-install
